@@ -123,9 +123,12 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 - **LiteLLM needs the `hosted_vllm/` prefix, not `openai/`.** With `openai/`,
   LiteLLM 1.95 routes to `/v1/responses` (the OpenAI Responses API), which
   mlx-lm does not implement — every request 404s.
-- **FastAPI must be pinned to 0.115.x.** LiteLLM 1.95 imports
-  `get_flat_dependant`, removed in newer FastAPI; installing `litellm[proxy]`
-  alone resolves to a version that fails at startup.
+- **FastAPI must be held below 0.141.** LiteLLM 1.95 declares
+  `fastapi>=0.136.3,<1.0` but imports `get_flat_dependant`, which FastAPI
+  removed in 0.141 — the declared range is missing an upper bound, so a plain
+  `pip install litellm[proxy]` resolves to a version that dies at startup with
+  `ImportError`. `fastapi==0.140.0` is the newest that satisfies both, and
+  `install.sh` asserts the import rather than trusting metadata.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
 

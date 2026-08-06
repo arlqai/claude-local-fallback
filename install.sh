@@ -44,8 +44,14 @@ fi
 say "Installing Python dependencies (large tree; this takes a few minutes)"
 "$RUNTIME/venv/bin/pip" install --quiet --upgrade pip
 "$RUNTIME/venv/bin/pip" install --quiet -r "$REPO/requirements.txt"
+
+# LiteLLM's declared fastapi range has no working upper bound (see
+# requirements.txt), so assert the symbol its proxy needs rather than trusting
+# metadata. Both checks are cheap and catch a broken resolve immediately.
 "$RUNTIME/venv/bin/python" -c 'from fastapi.dependencies.utils import get_flat_dependant' \
-    || die "FastAPI pin is wrong: litellm needs get_flat_dependant (fastapi 0.115.x)"
+    || die "FastAPI too new: litellm 1.95 needs get_flat_dependant (use fastapi<0.141)"
+"$RUNTIME/venv/bin/python" -c 'import litellm' >/dev/null 2>&1 \
+    || die "litellm failed to import"
 
 # --- launchd agents ----------------------------------------------------------
 say "Rendering and installing launchd agents"
