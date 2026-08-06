@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.arlq.mlx-lm</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<!-- No --model: the model loads lazily on the first request that names
+		     it, so ~17GB is not held resident while idle. Cold start costs
+		     roughly 30-60s; every request after that is warm. -->
+		<string>/opt/homebrew/opt/mlx-lm/bin/mlx_lm.server</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>8080</string>
+		<string>--max-tokens</string>
+		<string>8192</string>
+		<string>--temp</string>
+		<string>0.7</string>
+		<string>--top-p</string>
+		<string>0.8</string>
+		<string>--top-k</string>
+		<string>20</string>
+		<string>--log-level</string>
+		<string>INFO</string>
+	</array>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>HF_HOME</key>
+		<string>__HOME__/.cache/huggingface</string>
+		<!-- Model is fully cached; skip Hub round-trips so startup works offline. -->
+		<key>HF_HUB_OFFLINE</key>
+		<string>1</string>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+
+	<!-- Serving process: avoid launchd's background CPU/GPU throttling. -->
+	<key>ProcessType</key>
+	<string>Interactive</string>
+
+	<key>WorkingDirectory</key>
+	<string>__HOME__</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/mlx-lm.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/mlx-lm.log</string>
+</dict>
+</plist>

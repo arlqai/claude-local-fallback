@@ -1,0 +1,12 @@
+# Rendered launchd plists (generated from launchd/*.plist by install.sh)
+*.rendered.plist
+
+# Runtime state, if anyone runs the router from inside this directory
+.last-local-use
+.last-upstream-trouble
+
+__pycache__/
+*.pyc
+venv/
+*.log
+.DS_Store

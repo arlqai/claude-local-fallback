@@ -1,0 +1,15 @@
+# Pinned because LiteLLM 1.95.0 is incompatible with FastAPI >= 0.116:
+# litellm/proxy/.../common.py imports `get_flat_dependant` from
+# fastapi.dependencies.utils, which newer FastAPI removed. Installing
+# `litellm[proxy]` alone resolves FastAPI to a version that fails at startup
+# with ImportError, so FastAPI must be held on the 0.115 line.
+#
+# Side effect of that pin: `mcp` and `sse-starlette` warn that they want
+# starlette >= 0.48 on Python 3.14. Harmless here -- the proxy only uses the
+# OpenAI/Anthropic translation paths, which work on starlette 0.46.
+litellm[proxy]==1.95.0
+fastapi==0.115.14
+
+# Router dependencies (also pulled in by litellm[proxy]; pinned for clarity).
+uvicorn==0.52.1
+httpx==0.28.1

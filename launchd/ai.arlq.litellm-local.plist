@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.arlq.litellm-local</string>
+
+	<!-- Translates the Anthropic Messages API to OpenAI chat/completions for
+	     mlx-lm. Loopback only; holds no credentials. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/share/claude-local-router/venv/bin/litellm</string>
+		<string>--config</string>
+		<string>__HOME__/.local/share/claude-local-router/litellm.config.yaml</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>4001</string>
+	</array>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>LITELLM_DONT_SHOW_FEEDBACK_BOX</key>
+		<string>1</string>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+
+	<key>WorkingDirectory</key>
+	<string>__HOME__/.local/share/claude-local-router</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/litellm-local.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/litellm-local.log</string>
+</dict>
+</plist>

@@ -1,0 +1,36 @@
+# LiteLLM handles only the Anthropic <-> OpenAI translation for the local model.
+# Claude-bound traffic never reaches this process; the router sends it straight
+# to api.anthropic.com.
+
+model_list:
+  - model_name: local-qwen
+    litellm_params:
+      # `hosted_vllm/` (not `openai/`) forces the chat-completions path.
+      # The `openai/` prefix routes to /v1/responses, which mlx-lm does not implement.
+      model: hosted_vllm/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
+      api_base: http://127.0.0.1:8080/v1
+      api_key: "none"
+      # mlx-lm loads one model at startup; keep requests inside its limits.
+      max_tokens: 8192
+
+  # Catch-all. Claude Code issues background requests (conversation titles and
+  # similar) under its own small/fast model names. Without this they 404 and
+  # those features silently fail. Everything resolves to the one loaded model.
+  - model_name: "*"
+    litellm_params:
+      model: hosted_vllm/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
+      api_base: http://127.0.0.1:8080/v1
+      api_key: "none"
+      max_tokens: 8192
+
+litellm_settings:
+  # Claude Code sends Anthropic-specific parameters that the OpenAI-shaped
+  # backend rejects. Drop them rather than 400ing the request.
+  drop_params: true
+  # Local inference has no cost; suppress spend tracking noise.
+  set_verbose: false
+
+general_settings:
+  # Bound to loopback and fronted by the router, so no master key is required.
+  # Set one here if you ever expose this port.
+  telemetry: false
