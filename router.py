@@ -211,7 +211,7 @@ async def _banner_injecting_stream(upstream):
     pending_index = None
     buf = b""
     try:
-        async for chunk in upstream.aiter_raw():
+        async for chunk in upstream.aiter_bytes():
             buf += chunk
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
@@ -293,7 +293,10 @@ def _response_headers(upstream, *, target: str, fell_back: bool) -> dict:
 def _stream_response(upstream, *, target: str, fell_back: bool, banner: bool):
     async def passthrough():
         try:
-            async for chunk in upstream.aiter_raw():
+            # Decoded bytes, not aiter_raw(): content-encoding is dropped from
+            # the response headers, so compressed SSE would reach the client
+            # undecodable and Claude Code would fall back to non-streaming.
+            async for chunk in upstream.aiter_bytes():
                 yield chunk
         finally:
             await upstream.aclose()
