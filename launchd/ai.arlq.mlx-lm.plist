@@ -25,6 +25,17 @@
 		<string>20</string>
 		<string>--log-level</string>
 		<string>INFO</string>
+		<!-- Claude Code sends several ~20-35k-token prompts at once (main turn
+		     plus background requests). Batched, their KV caches on top of the
+		     model exhaust Metal memory, the generation thread dies, and the
+		     server stays up answering every request with a 404. Serve one
+		     request at a time and bound the prompt cache (4GB). -->
+		<string>--decode-concurrency</string>
+		<string>1</string>
+		<string>--prompt-concurrency</string>
+		<string>1</string>
+		<string>--prompt-cache-bytes</string>
+		<string>4294967296</string>
 	</array>
 
 	<key>EnvironmentVariables</key>

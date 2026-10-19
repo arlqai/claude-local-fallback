@@ -129,6 +129,13 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   `pip install litellm[proxy]` resolves to a version that dies at startup with
   `ImportError`. `fastapi==0.140.0` is the newest that satisfies both, and
   `install.sh` asserts the import rather than trusting metadata.
+- **A Metal OOM kills mlx-lm's generation thread, not the process.** Batching
+  several large Claude Code prompts (plus an unbounded prompt cache) exhausts GPU
+  memory: the log shows `kIOGPUCommandBufferCallbackErrorOutOfMemory`, then every
+  completion returns `404 {"error": "generation thread died"}` while `/v1/models`
+  stays healthy — so `KeepAlive` never restarts it. The plist passes
+  `--decode-concurrency 1 --prompt-concurrency 1 --prompt-cache-bytes 4294967296`
+  to prevent it. Trade-off: concurrent requests queue behind each other.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
 
