@@ -135,7 +135,9 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   completion returns `404 {"error": "generation thread died"}` while `/v1/models`
   stays healthy — so `KeepAlive` never restarts it. The plist passes
   `--decode-concurrency 1 --prompt-concurrency 1 --prompt-cache-bytes 4294967296`
-  to prevent it. Trade-off: concurrent requests queue behind each other.
+  to prevent it. Trade-off: concurrent requests queue behind each other. If it
+  happens anyway, `mlx-idle-unload.sh` sees `generation thread died` after the
+  latest `Starting httpd` in `mlx-lm.log` and restarts the service within 5 min.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
 

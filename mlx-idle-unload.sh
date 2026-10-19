@@ -19,11 +19,28 @@ IDLE_SECONDS="${MLX_IDLE_SECONDS:-900}"   # 15 minutes
 KEEP_WARM_SECONDS="${MLX_KEEP_WARM_SECONDS:-1800}"  # 30 minutes
 RSS_THRESHOLD_KB="${MLX_RSS_THRESHOLD_KB:-1048576}"  # 1GB => a model is loaded
 PORT="${MLX_PORT:-8080}"
+SERVER_LOG="${MLX_SERVER_LOG:-${HOME}/Library/Logs/mlx-lm.log}"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
 
 PID=$(launchctl print "gui/$(id -u)/${LABEL}" 2>/dev/null | awk '/^\tpid = /{print $3}')
 [ -n "${PID:-}" ] || exit 0
+
+# A Metal OOM kills the generation thread but not the process: /v1/models stays
+# up and every completion 404s, so KeepAlive never fires. Detect it from the log
+# (a death after the latest startup) rather than probing, since a probe would
+# force a model load on a healthy idle server. Runs before the RSS check because
+# a dead server can hold almost no memory.
+if [ -f "$SERVER_LOG" ] && awk '
+    /Starting httpd/          { dead = 0 }
+    /generation thread died/  { dead = 1 }
+    END                       { exit !dead }' "$SERVER_LOG"; then
+    log "generation thread died - restarting ${LABEL}"
+    launchctl kickstart -k "gui/$(id -u)/${LABEL}" >/dev/null 2>&1 \
+        && log "restart issued" \
+        || log "restart FAILED"
+    exit 0
+fi
 
 # Nothing loaded yet: no memory to reclaim.
 RSS=$(ps -o rss= -p "$PID" 2>/dev/null | tr -d ' ')
