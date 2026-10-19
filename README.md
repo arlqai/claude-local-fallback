@@ -101,6 +101,7 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 | `ROUTER_FALLBACK_BANNER` | `1` | In-conversation banner |
 | `ROUTER_FALLBACK_NOTIFY` | `1` | Desktop notification |
 | `ROUTER_NOTIFY_COOLDOWN` | `60` | Notification rate limit, seconds |
+| `ROUTER_LOCAL_MAX_TOKENS` | `8192` | Hard output cap on local requests |
 | `MLX_IDLE_SECONDS` | `900` | Idle time before releasing memory |
 | `MLX_KEEP_WARM_SECONDS` | `1800` | Stay warm after upstream trouble |
 
@@ -138,6 +139,12 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   to prevent it. Trade-off: concurrent requests queue behind each other. If it
   happens anyway, `mlx-idle-unload.sh` sees `generation thread died` after the
   latest `Starting httpd` in `mlx-lm.log` and restarts the service within 5 min.
+- **`max_tokens` in `litellm.config.yaml` and `--max-tokens` on mlx-lm are
+  defaults, not caps.** LiteLLM merges `{**litellm_params, **request}`, so the
+  request's own value wins, and Claude Code asks for far more than 8192. With
+  one request served at a time, a single runaway generation held the slot for
+  35+ min and every queued request (two parallel `/code-review`s) timed out. The
+  router clamps `max_tokens` on local requests to `ROUTER_LOCAL_MAX_TOKENS`.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
 
