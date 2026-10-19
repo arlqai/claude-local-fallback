@@ -36,6 +36,16 @@
 		<string>1</string>
 		<string>--prompt-cache-bytes</string>
 		<string>4294967296</string>
+		<!-- The byte cap above only drives eviction between sequences: one long
+		     prompt still overshoots it (8.9GB seen for an 89k-token prompt), and
+		     a stale second sequence sat beside a new 27k-token prefill when the
+		     generation thread died again. Keep one cached sequence, and store KV
+		     in 8 bits (from token 5000 on), which halves its footprint for a
+		     negligible quality cost. -->
+		<string>--prompt-cache-size</string>
+		<string>1</string>
+		<string>--kv-bits</string>
+		<string>8</string>
 	</array>
 
 	<key>EnvironmentVariables</key>
