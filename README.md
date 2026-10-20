@@ -119,6 +119,12 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   launchctl bootout   gui/$(id -u)/ai.arlq.mlx-lm
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.arlq.mlx-lm.plist
   ```
+- **Reloading the agents kills the Claude Code session that runs `install.sh`**
+  when that session goes through the router (502, then its tool runner kills
+  the script). Run in the foreground, the script died between bootout and
+  bootstrap and left litellm and the router unloaded. `install.sh` now runs the
+  reload detached (`--reload-agents`, reparented to launchd) and logs it to
+  `~/.local/share/claude-local-router/reload-agents.log`, so it completes either way.
 - **`settings.json` `env` overrides shell environment variables.** Once
   `ANTHROPIC_BASE_URL` is in there, `ANTHROPIC_BASE_URL=... claude` is ignored.
   Use `claude --settings '{"env":{...}}'` to override for one run.
