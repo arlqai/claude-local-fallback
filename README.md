@@ -177,6 +177,12 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   `medium` survive the trip, and the router drops the key for anything else —
   which lands on the backend's default effort, `xhigh`, one notch *above* the
   rejected `high`. mlx-lm ignores the key either way.
+  On `/v1/messages` the effort is not a `reasoning_effort` key at all: LiteLLM
+  derives it from Anthropic's `thinking` — `adaptive` takes
+  `output_config.effort`, `enabled` buckets `budget_tokens` (≥4096 → `high`,
+  <1024 → `minimal`, also rejected). So for Claude Code's traffic the router
+  drops `thinking` (and `output_config.effort`) whenever that derived effort is
+  not `low`/`medium`; dropping only a top-level `reasoning_effort` missed it.
 
 ## Caveats
 
