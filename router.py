@@ -226,6 +226,34 @@ def _cap_max_tokens(body: bytes) -> bytes:
     return json.dumps(payload).encode()
 
 
+# Efforts that survive the trip to a local backend. llm-d's vLLM engine accepts
+# only low/medium/xhigh and 400s anything else; mlx-lm ignores the key outright.
+# xhigh is absent on purpose: LiteLLM's Anthropic shim rewrites it to `high`
+# before forwarding, which is exactly the value llm-d rejects.
+LOCAL_EFFORTS = {"low", "medium"}
+
+
+def _drop_unsupported_effort(body: bytes) -> bytes:
+    """Drop `reasoning_effort` unless a local backend accepts its value.
+
+    Claude Code sends `high` on max-effort turns (and any level the caller asks
+    for with --effort). LiteLLM forwards the key verbatim -- `drop_params` only
+    covers Anthropic-shaped extras -- so the backend's 400 reaches Claude Code,
+    which does not retry a 400: the turn dies with "Unexpected reasoning effort".
+    Dropping instead lands on the backend's default effort, which is xhigh on
+    llm-d: one notch above the rejected `high`, and nothing is lost.
+    """
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return body
+    effort = payload.get("reasoning_effort")
+    if effort is None or effort in LOCAL_EFFORTS:
+        return body
+    del payload["reasoning_effort"]
+    return json.dumps(payload).encode()
+
+
 def _forward_headers(request: Request, *, local: bool) -> dict:
     headers = {
         k: v for k, v in request.headers.items()
@@ -337,6 +365,7 @@ async def _send(request: Request, path: str, body: bytes, *, local: bool):
         _touch_local_stamp()
         if body:
             body = _cap_max_tokens(body)
+            body = _drop_unsupported_effort(body)
     base = LOCAL_BACKEND if local else UPSTREAM
     url = f"{base}/{path}"
     if request.url.query:
