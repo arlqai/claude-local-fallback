@@ -101,6 +101,7 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 | `ROUTER_FALLBACK_BANNER` | `1` | In-conversation banner |
 | `ROUTER_FALLBACK_NOTIFY` | `1` | Desktop notification |
 | `ROUTER_NOTIFY_COOLDOWN` | `60` | Notification rate limit, seconds |
+| `ROUTER_MLX_RESTART_COOLDOWN` | `120` | Minimum gap between router-issued mlx-lm restarts, seconds |
 | `MLX_IDLE_SECONDS` | `900` | Idle time before releasing memory |
 | `MLX_KEEP_WARM_SECONDS` | `1800` | Stay warm after upstream trouble |
 
@@ -138,6 +139,11 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   to prevent it. Trade-off: concurrent requests queue behind each other. If it
   happens anyway, `mlx-idle-unload.sh` sees `generation thread died` after the
   latest `Starting httpd` in `mlx-lm.log` and restarts the service within 5 min.
+  LiteLLM relays the death as a 404, which Claude Code reads as "model not
+  found" and never retries, so the router rewrites it to a `529 overloaded_error`
+  (`retry-after: 30`) and kickstarts mlx-lm itself, at most once per
+  `ROUTER_MLX_RESTART_COOLDOWN` seconds. Claude Code then retries through the cold
+  load instead of failing the turn.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
 
