@@ -404,12 +404,46 @@ def _touch_local_stamp() -> None:
         pass
 
 
+LITELLM_ONLY_FIELDS = {"provider_specific_fields"}
+
+
+def _strip_litellm_fields(body: bytes) -> bytes:
+    """Remove LiteLLM-only keys from message content blocks bound for Anthropic.
+
+    LiteLLM's non-streaming Anthropic responses carry
+    `"provider_specific_fields": null` on tool_use blocks. Claude Code keeps
+    those blocks in its history, so once a session that used a local model
+    talks to Anthropic again, every request 400s with
+    `messages.N.content.M.tool_use.provider_specific_fields: Extra inputs are
+    not permitted`. Stripping here also repairs sessions already carrying them.
+    """
+    if b"provider_specific_fields" not in body:
+        return body
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return body
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(messages, list):
+        return body
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    for key in LITELLM_ONLY_FIELDS & block.keys():
+                        del block[key]
+    return json.dumps(payload).encode()
+
+
 async def _send(request: Request, path: str, body: bytes, *, local: bool):
     if local:
         _touch_local_stamp()
         if body:
             body = _cap_max_tokens(body)
             body = _drop_unsupported_effort(body)
+    elif body:
+        body = _strip_litellm_fields(body)
     base = LOCAL_BACKEND if local else UPSTREAM
     url = f"{base}/{path}"
     if request.url.query:

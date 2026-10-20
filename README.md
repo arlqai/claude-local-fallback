@@ -194,6 +194,13 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   drops `thinking` (and `output_config.effort`) whenever that derived effort is
   not `low`/`medium`; dropping only a top-level `reasoning_effort` missed it.
 
+- **LiteLLM adds `provider_specific_fields` to `tool_use` blocks** in its
+  non-streaming Anthropic responses. Claude Code keeps them in history, and once
+  a session that used a local model talks to Anthropic again every request 400s
+  with `tool_use.provider_specific_fields: Extra inputs are not permitted`. The
+  router strips the key from Anthropic-bound requests, which also repairs
+  sessions that already carry it.
+
 ## Caveats
 
 - **All Claude Code traffic flows through `:4000`.** If the router dies, `claude`
