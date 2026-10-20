@@ -159,6 +159,18 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   router clamps `max_tokens` on local requests to `ROUTER_LOCAL_MAX_TOKENS`.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
+- **`reasoning_effort: "high"` kills every max-effort local turn.** Claude Code
+  sends `high` on `max` turns (and whatever `--effort` asks for). LiteLLM's
+  `drop_params` covers Anthropic-shaped extras but forwards this one verbatim, and
+  llm-d's vLLM engine answers `400 Unexpected reasoning effort high. Supported
+  types are xhigh (default), medium, and low.` Claude Code does not retry a 400, so
+  the turn dies outright — a `/code-review max` fan-out loses every sub-agent at
+  once. Two traps when fixing it: llm-d's own error names `xhigh` as its default,
+  and `reasoning_effort: "xhigh"` does **also** 400, because LiteLLM's Anthropic
+  shim rewrites `xhigh` back to `high` before forwarding. So only `low` and
+  `medium` survive the trip, and the router drops the key for anything else —
+  which lands on the backend's default effort, `xhigh`, one notch *above* the
+  rejected `high`. mlx-lm ignores the key either way.
 
 ## Caveats
 
