@@ -33,8 +33,8 @@ fi
 # --- runtime directory -------------------------------------------------------
 say "Installing code into $RUNTIME"
 mkdir -p "$RUNTIME"
-cp "$REPO/router.py" "$REPO/litellm.config.yaml" "$REPO/mlx-idle-unload.sh" "$RUNTIME/"
-chmod +x "$RUNTIME/mlx-idle-unload.sh"
+cp "$REPO/router.py" "$REPO/litellm.config.yaml" "$REPO/mlx-idle-unload.sh" "$REPO/start-litellm.sh" "$RUNTIME/"
+chmod +x "$RUNTIME/mlx-idle-unload.sh" "$RUNTIME/start-litellm.sh"
 
 # --- virtualenv --------------------------------------------------------------
 if [ ! -x "$RUNTIME/venv/bin/python" ]; then

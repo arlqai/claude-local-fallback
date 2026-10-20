@@ -6,10 +6,11 @@
 	<string>ai.arlq.litellm-local</string>
 
 	<!-- Translates the Anthropic Messages API to OpenAI chat/completions for
-	     mlx-lm. Loopback only; holds no credentials. -->
+	     mlx-lm and llm-d. Loopback only; the llm-d key is fetched at start by
+	     start-litellm.sh and only lives in the process environment. -->
 	<key>ProgramArguments</key>
 	<array>
-		<string>__HOME__/.local/share/claude-local-router/venv/bin/litellm</string>
+		<string>__HOME__/.local/share/claude-local-router/start-litellm.sh</string>
 		<string>--config</string>
 		<string>__HOME__/.local/share/claude-local-router/litellm.config.yaml</string>
 		<string>--host</string>

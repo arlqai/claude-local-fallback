@@ -13,6 +13,14 @@ model_list:
       # mlx-lm loads one model at startup; keep requests inside its limits.
       max_tokens: 8192
 
+  # Arlq llm-d on the platform cluster. The served model name is whatever
+  # GET /v1/models returns; update it here when llm-d swaps models.
+  - model_name: local-llmd
+    litellm_params:
+      model: hosted_vllm/qwen3.8-flash-next-uncensored-nvfp4
+      api_base: https://llm-d.platform.scaleway.arlq.ai/v1
+      api_key: os.environ/LLM_D_API_KEY
+
   # Catch-all. Claude Code issues background requests (conversation titles and
   # similar) under its own small/fast model names. Without this they 404 and
   # those features silently fail. Everything resolves to the one loaded model.
