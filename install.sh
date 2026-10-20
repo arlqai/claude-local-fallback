@@ -15,6 +15,27 @@ LABELS=(ai.arlq.mlx-lm ai.arlq.litellm-local ai.arlq.claude-router ai.arlq.mlx-i
 say() { printf '\033[1m==>\033[0m %s\n' "$1"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
+# bootout then bootstrap: launchctl caches the job definition, so `kickstart`
+# alone silently keeps running the previous plist's arguments.
+reload_agents() {
+    for L in "${LABELS[@]}"; do
+        launchctl bootout "gui/$UID_NUM/$L" 2>/dev/null || true
+    done
+    sleep 2
+    for L in "${LABELS[@]}"; do
+        if launchctl bootstrap "gui/$UID_NUM" "$AGENTS/$L.plist" 2>/dev/null; then
+            printf '    loaded %s\n' "$L"
+        else
+            printf '    FAILED %s\n' "$L"
+        fi
+    done
+    echo "reload-done"
+}
+if [ "${1:-}" = "--reload-agents" ]; then
+    reload_agents
+    exit 0
+fi
+
 # --- prerequisites -----------------------------------------------------------
 say "Checking prerequisites"
 [ "$(uname -s)" = "Darwin" ] || die "macOS only (launchd + mlx)"
@@ -60,19 +81,23 @@ for L in "${LABELS[@]}"; do
     sed "s|__HOME__|$HOME|g" "$REPO/launchd/$L.plist" > "$AGENTS/$L.plist"
 done
 
-# bootout then bootstrap: launchctl caches the job definition, so `kickstart`
-# alone silently keeps running the previous plist's arguments.
-for L in "${LABELS[@]}"; do
-    launchctl bootout "gui/$UID_NUM/$L" 2>/dev/null || true
+# Booting out the router kills any Claude Code session routed through it, and
+# that session's tool runner then kills this script, leaving litellm and the
+# router unloaded. So the reload runs detached: fork, setsid, and the parent
+# exits, which reparents it to launchd, out of reach of both process-group and
+# process-tree kills. This script only waits for it.
+log="$RUNTIME/reload-agents.log"
+: > "$log"
+python3 -c 'import os, sys
+if os.fork(): os._exit(0)
+os.setsid()
+os.execv(sys.argv[1], sys.argv[1:])' "$REPO/install.sh" --reload-agents >"$log" 2>&1 </dev/null
+for _ in $(seq 60); do
+    grep -q '^reload-done$' "$log" && break
+    sleep 1
 done
-sleep 2
-for L in "${LABELS[@]}"; do
-    if launchctl bootstrap "gui/$UID_NUM" "$AGENTS/$L.plist" 2>/dev/null; then
-        printf '    loaded %s\n' "$L"
-    else
-        printf '    FAILED %s\n' "$L"
-    fi
-done
+grep -v '^reload-done$' "$log" || true
+grep -q '^reload-done$' "$log" || die "agent reload did not finish in 60s; see $log"
 
 # --- health ------------------------------------------------------------------
 say "Waiting for services"
