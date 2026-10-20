@@ -233,25 +233,64 @@ def _cap_max_tokens(body: bytes) -> bytes:
 LOCAL_EFFORTS = {"low", "medium"}
 
 
-def _drop_unsupported_effort(body: bytes) -> bytes:
-    """Drop `reasoning_effort` unless a local backend accepts its value.
+def _anthropic_effort(payload: dict):
+    """The `reasoning_effort` LiteLLM derives from an Anthropic `thinking` block.
 
-    Claude Code sends `high` on max-effort turns (and any level the caller asks
-    for with --effort). LiteLLM forwards the key verbatim -- `drop_params` only
-    covers Anthropic-shaped extras -- so the backend's 400 reaches Claude Code,
-    which does not retry a 400: the turn dies with "Unexpected reasoning effort".
-    Dropping instead lands on the backend's default effort, which is xhigh on
-    llm-d: one notch above the rejected `high`, and nothing is lost.
+    Mirrors litellm's anthropic adapter: adaptive thinking takes
+    `output_config.effort` (default medium); enabled thinking buckets
+    `budget_tokens` with litellm's DEFAULT_REASONING_EFFORT_*_THINKING_BUDGET
+    thresholds (1024 low, 2048 medium, 4096 high).
+    """
+    thinking = payload.get("thinking")
+    if not isinstance(thinking, dict):
+        return None
+    kind = thinking.get("type")
+    if kind == "adaptive":
+        config = payload.get("output_config")
+        return (config.get("effort") if isinstance(config, dict) else None) or "medium"
+    if kind == "enabled":
+        budget = thinking.get("budget_tokens") or 0
+        if budget >= 4096:
+            return "high"
+        if budget >= 2048:
+            return "medium"
+        return "low" if budget >= 1024 else "minimal"
+    return None
+
+
+def _drop_unsupported_effort(body: bytes) -> bytes:
+    """Drop the reasoning effort unless a local backend accepts its value.
+
+    Claude Code asks for `high` (or above) on max-effort turns. On /v1/messages
+    it says so with Anthropic's `thinking` (+ `output_config.effort`), which
+    LiteLLM turns into `reasoning_effort` for the backend; OpenAI-shaped bodies
+    carry `reasoning_effort` directly. llm-d 400s anything outside its list,
+    and Claude Code does not retry a 400: the turn dies with "Unexpected
+    reasoning effort". Dropping instead lands on the backend's default effort,
+    which is xhigh on llm-d: one notch above the rejected `high`, and nothing
+    is lost.
     """
     try:
         payload = json.loads(body)
     except ValueError:
         return body
-    effort = payload.get("reasoning_effort")
-    if effort is None or effort in LOCAL_EFFORTS:
+    if not isinstance(payload, dict):
         return body
-    del payload["reasoning_effort"]
-    return json.dumps(payload).encode()
+    changed = False
+    effort = payload.get("reasoning_effort")
+    if effort is not None and effort not in LOCAL_EFFORTS:
+        del payload["reasoning_effort"]
+        changed = True
+    effort = _anthropic_effort(payload)
+    if effort is not None and effort not in LOCAL_EFFORTS:
+        del payload["thinking"]
+        config = payload.get("output_config")
+        if isinstance(config, dict):
+            config.pop("effort", None)
+            if not config:
+                del payload["output_config"]
+        changed = True
+    return json.dumps(payload).encode() if changed else body
 
 
 def _forward_headers(request: Request, *, local: bool) -> dict:
