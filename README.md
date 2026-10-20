@@ -106,7 +106,8 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 | `ROUTER_FALLBACK_BANNER` | `1` | In-conversation banner |
 | `ROUTER_FALLBACK_NOTIFY` | `1` | Desktop notification |
 | `ROUTER_NOTIFY_COOLDOWN` | `60` | Notification rate limit, seconds |
-| `ROUTER_LOCAL_MAX_TOKENS` | `8192` | Hard output cap on local requests |
+| `ROUTER_LOCAL_MAX_TOKENS` | `8192` | Hard output cap on local requests served by mlx-lm |
+| `ROUTER_UNCAPPED_MODELS` | `local-llmd` | Comma-separated local models exempt from that cap |
 | `ROUTER_MLX_RESTART_COOLDOWN` | `120` | Minimum gap between router-issued mlx-lm restarts, seconds |
 | `MLX_IDLE_SECONDS` | `900` | Idle time before releasing memory |
 | `MLX_KEEP_WARM_SECONDS` | `1800` | Stay warm after upstream trouble |
@@ -163,6 +164,10 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   one request served at a time, a single runaway generation held the slot for
   35+ min and every queued request (two parallel `/code-review`s) timed out. The
   router clamps `max_tokens` on local requests to `ROUTER_LOCAL_MAX_TOKENS`.
+  Not on `local-llmd` (`ROUTER_UNCAPPED_MODELS`): llm-d serves requests
+  concurrently, so the cap bought nothing there, and a capped answer ends with
+  `stop_reason: max_tokens`, which Claude Code reports as "exceeded the 128000
+  output token maximum" and fails the turn. On `local-qwen` that trade-off stands.
 - **Anthropic's `--fallback-model` flag only works with `--print`**, which is why
   fallback lives in the router instead.
 - **`reasoning_effort: "high"` kills every max-effort local turn.** Claude Code

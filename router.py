@@ -58,6 +58,11 @@ FALLBACK_MODEL = os.environ.get("ROUTER_FALLBACK_MODEL", "local-qwen")
 # generation would otherwise hold the slot for half an hour while every queued
 # request times out.
 LOCAL_MAX_TOKENS = int(os.environ.get("ROUTER_LOCAL_MAX_TOKENS", "8192"))
+# Local models the cap does not apply to: they are not served by the single
+# mlx-lm slot (llm-d runs on the cluster with concurrent requests). Capping them
+# only hurts: a long answer stops at the cap with stop_reason max_tokens, and
+# Claude Code fails the turn as "exceeded the <requested> output token maximum".
+UNCAPPED_MODELS = set(os.environ.get("ROUTER_UNCAPPED_MODELS", "local-llmd").split(","))
 
 # Transient statuses worth retrying upstream before giving up. Anthropic often
 # returns 529 with `retry-after: 0`, meaning an immediate retry will likely
@@ -220,7 +225,7 @@ def _cap_max_tokens(body: bytes) -> bytes:
         requested = int(payload["max_tokens"])
     except (ValueError, KeyError, TypeError):
         return body
-    if requested <= LOCAL_MAX_TOKENS:
+    if requested <= LOCAL_MAX_TOKENS or payload.get("model") in UNCAPPED_MODELS:
         return body
     payload["max_tokens"] = LOCAL_MAX_TOKENS
     return json.dumps(payload).encode()
