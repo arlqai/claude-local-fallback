@@ -102,6 +102,7 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 | `ROUTER_FALLBACK_NOTIFY` | `1` | Desktop notification |
 | `ROUTER_NOTIFY_COOLDOWN` | `60` | Notification rate limit, seconds |
 | `ROUTER_LOCAL_MAX_TOKENS` | `8192` | Hard output cap on local requests |
+| `ROUTER_MLX_RESTART_COOLDOWN` | `120` | Minimum gap between router-issued mlx-lm restarts, seconds |
 | `MLX_IDLE_SECONDS` | `900` | Idle time before releasing memory |
 | `MLX_KEEP_WARM_SECONDS` | `1800` | Stay warm after upstream trouble |
 
@@ -135,10 +136,16 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   memory: the log shows `kIOGPUCommandBufferCallbackErrorOutOfMemory`, then every
   completion returns `404 {"error": "generation thread died"}` while `/v1/models`
   stays healthy — so `KeepAlive` never restarts it. The plist passes
-  `--decode-concurrency 1 --prompt-concurrency 1 --prompt-cache-bytes 4294967296`
-  to prevent it. Trade-off: concurrent requests queue behind each other. If it
+  `--decode-concurrency 1 --prompt-concurrency 1 --prompt-cache-bytes 4294967296
+  --prompt-cache-size 1 --kv-bits 8` to prevent it. The byte cap alone is not
+  enough: it only evicts between sequences, so a single long prompt overshoots it. Trade-off: concurrent requests queue behind each other. If it
   happens anyway, `mlx-idle-unload.sh` sees `generation thread died` after the
   latest `Starting httpd` in `mlx-lm.log` and restarts the service within 5 min.
+  LiteLLM relays the death as a 404, which Claude Code reads as "model not
+  found" and never retries, so the router rewrites it to a `529 overloaded_error`
+  (`retry-after: 30`) and kickstarts mlx-lm itself, at most once per
+  `ROUTER_MLX_RESTART_COOLDOWN` seconds. Claude Code then retries through the cold
+  load instead of failing the turn.
 - **`max_tokens` in `litellm.config.yaml` and `--max-tokens` on mlx-lm are
   defaults, not caps.** LiteLLM merges `{**litellm_params, **request}`, so the
   request's own value wins, and Claude Code asks for far more than 8192. With

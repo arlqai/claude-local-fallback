@@ -90,6 +90,16 @@ BANNER = os.environ.get(
     f"from the local model ({FALLBACK_MODEL}), not Claude.",
 )
 
+# A Metal OOM kills mlx-lm's generation thread but not the process, and every
+# completion then fails with this marker. LiteLLM relays it as a 404, which
+# Claude Code reads as "model not found" and never retries. The router turns it
+# into a retryable 529 and restarts mlx-lm at once instead of waiting for the
+# 5-minute watchdog.
+DEAD_GENERATION_MARKER = b"generation thread died"
+MLX_LABEL = os.environ.get("ROUTER_MLX_LABEL", "ai.arlq.mlx-lm")
+MLX_RESTART_COOLDOWN = float(os.environ.get("ROUTER_MLX_RESTART_COOLDOWN", "120"))
+DEAD_GENERATION_RETRY_AFTER = "30"
+
 # Generous read timeout: a cold mlx-lm load can take a while, and long agentic
 # turns on either backend can legitimately exceed a default timeout.
 TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=60.0, pool=10.0)
@@ -108,6 +118,7 @@ app = FastAPI()
 client = httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False)
 
 _last_notify = 0.0
+_last_mlx_restart = float("-inf")
 
 
 def _log(msg: str) -> None:
@@ -137,6 +148,46 @@ async def _notify(reason: str) -> None:
         asyncio.create_task(proc.wait())
     except OSError:
         pass
+
+
+async def _restart_mlx() -> None:
+    """Kickstart mlx-lm, at most once per cooldown.
+
+    Every request queued behind the dead thread fails the same way, so without
+    the cooldown one death would restart the server once per request, killing
+    the cold load the previous restart started.
+    """
+    global _last_mlx_restart
+    now = time.monotonic()
+    if now - _last_mlx_restart < MLX_RESTART_COOLDOWN:
+        return
+    _last_mlx_restart = now
+    _log(f"MLX DEAD: generation thread died -> restarting {MLX_LABEL}")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{MLX_LABEL}",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        asyncio.create_task(proc.wait())
+    except OSError:
+        pass
+
+
+def _overloaded(message: str, *, target: str, fell_back: bool) -> Response:
+    """An Anthropic-shaped 529, which Claude Code retries with backoff."""
+    payload = {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": message},
+    }
+    headers = {"x-router-target": target, "retry-after": DEAD_GENERATION_RETRY_AFTER}
+    if fell_back:
+        headers["x-router-fallback"] = "true"
+    return Response(
+        content=json.dumps(payload).encode(),
+        status_code=529,
+        headers=headers,
+        media_type="application/json",
+    )
 
 
 def _model_of(body: bytes) -> str:
@@ -334,6 +385,23 @@ async def _finish(upstream, *, target: str, fell_back: bool):
     """Build the client response, applying the banner when falling back."""
     media_type = upstream.headers.get("content-type") or ""
     banner = fell_back and FALLBACK_BANNER
+
+    # Errors arrive before any stream starts, so the body is small and safe to read.
+    if target == "local" and upstream.status_code == 404:
+        payload = await upstream.aread()
+        await upstream.aclose()
+        if DEAD_GENERATION_MARKER in payload:
+            await _restart_mlx()
+            return _overloaded(
+                "Local model crashed (generation thread died); restarting it.",
+                target=target, fell_back=fell_back,
+            )
+        return Response(
+            content=payload,
+            status_code=404,
+            headers=_response_headers(upstream, target=target, fell_back=fell_back),
+            media_type=media_type or None,
+        )
 
     if "text/event-stream" in media_type:
         return _stream_response(
