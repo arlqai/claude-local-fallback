@@ -126,6 +126,11 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   bootstrap and left litellm and the router unloaded. `install.sh` now runs the
   reload detached (`--reload-agents`, reparented to launchd) and logs it to
   `~/.local/share/claude-local-router/reload-agents.log`, so it completes either way.
+- **`launchctl bootout` returns before the old process exits.** uvicorn first
+  drains open client connections, up to launchd's ~20s exit timeout, and
+  `bootstrap` of a label that is still draining fails. A fixed `sleep 2` left
+  litellm and the router unloaded whenever a session was streaming through them,
+  so `install.sh` retries each bootstrap for up to 40s.
 - **`settings.json` `env` overrides shell environment variables.** Once
   `ANTHROPIC_BASE_URL` is in there, `ANTHROPIC_BASE_URL=... claude` is ignored.
   Use `claude --settings '{"env":{...}}'` to override for one run.

@@ -21,9 +21,19 @@ reload_agents() {
     for L in "${LABELS[@]}"; do
         launchctl bootout "gui/$UID_NUM/$L" 2>/dev/null || true
     done
-    sleep 2
+    # bootout returns before the old process exits: uvicorn drains open client
+    # connections first, up to launchd's ~20s exit timeout. Bootstrapping a
+    # label that is still draining fails, so retry until the old job is gone.
     for L in "${LABELS[@]}"; do
-        if launchctl bootstrap "gui/$UID_NUM" "$AGENTS/$L.plist" 2>/dev/null; then
+        loaded=""
+        for _ in $(seq 40); do
+            if launchctl bootstrap "gui/$UID_NUM" "$AGENTS/$L.plist" 2>/dev/null; then
+                loaded=1
+                break
+            fi
+            sleep 1
+        done
+        if [ -n "$loaded" ]; then
             printf '    loaded %s\n' "$L"
         else
             printf '    FAILED %s\n' "$L"
@@ -92,12 +102,12 @@ python3 -c 'import os, sys
 if os.fork(): os._exit(0)
 os.setsid()
 os.execv(sys.argv[1], sys.argv[1:])' "$REPO/install.sh" --reload-agents >"$log" 2>&1 </dev/null
-for _ in $(seq 60); do
+for _ in $(seq 180); do
     grep -q '^reload-done$' "$log" && break
     sleep 1
 done
 grep -v '^reload-done$' "$log" || true
-grep -q '^reload-done$' "$log" || die "agent reload did not finish in 60s; see $log"
+grep -q '^reload-done$' "$log" || die "agent reload did not finish in 180s; see $log"
 
 # --- health ------------------------------------------------------------------
 say "Waiting for services"
