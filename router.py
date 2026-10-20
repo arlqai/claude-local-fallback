@@ -52,6 +52,12 @@ TROUBLE_STAMP = os.environ.get(
 
 FALLBACK_ENABLED = _flag("ROUTER_FALLBACK")
 FALLBACK_MODEL = os.environ.get("ROUTER_FALLBACK_MODEL", "local-qwen")
+# Hard output cap for the local model. LiteLLM's `max_tokens` and mlx-lm's
+# --max-tokens are only defaults: the request's own value wins, and Claude Code
+# asks for far more. mlx-lm serves one request at a time, so a single runaway
+# generation would otherwise hold the slot for half an hour while every queued
+# request times out.
+LOCAL_MAX_TOKENS = int(os.environ.get("ROUTER_LOCAL_MAX_TOKENS", "8192"))
 
 # Transient statuses worth retrying upstream before giving up. Anthropic often
 # returns 529 with `retry-after: 0`, meaning an immediate retry will likely
@@ -208,6 +214,18 @@ def _rewrite_model(body: bytes, model: str) -> bytes:
     return json.dumps(payload).encode()
 
 
+def _cap_max_tokens(body: bytes) -> bytes:
+    try:
+        payload = json.loads(body)
+        requested = int(payload["max_tokens"])
+    except (ValueError, KeyError, TypeError):
+        return body
+    if requested <= LOCAL_MAX_TOKENS:
+        return body
+    payload["max_tokens"] = LOCAL_MAX_TOKENS
+    return json.dumps(payload).encode()
+
+
 def _forward_headers(request: Request, *, local: bool) -> dict:
     headers = {
         k: v for k, v in request.headers.items()
@@ -317,6 +335,8 @@ def _touch_local_stamp() -> None:
 async def _send(request: Request, path: str, body: bytes, *, local: bool):
     if local:
         _touch_local_stamp()
+        if body:
+            body = _cap_max_tokens(body)
     base = LOCAL_BACKEND if local else UPSTREAM
     url = f"{base}/{path}"
     if request.url.query:
