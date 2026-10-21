@@ -23,6 +23,7 @@ line in this process's log.
 import asyncio
 import json
 import os
+import re
 import time
 
 import httpx
@@ -190,6 +191,41 @@ def _overloaded(message: str, *, target: str, fell_back: bool) -> Response:
     return Response(
         content=json.dumps(payload).encode(),
         status_code=529,
+        headers=headers,
+        media_type="application/json",
+    )
+
+
+# A local backend rejects an over-long prompt with LiteLLM's
+# ContextWindowExceededError (vLLM: "maximum context length is M tokens ...
+# contains at least N input tokens"). Claude Code compacts the conversation and
+# retries only on Anthropic's wording, "prompt is too long: N tokens > M
+# maximum"; anything else fails the turn. The router rewrites one into the other.
+CONTEXT_MAX_RE = re.compile(rb"maximum context length is (\d+) tokens")
+CONTEXT_INPUT_RE = re.compile(rb"(?:contains at least|requested) (\d+)")
+
+
+def _prompt_too_long(payload: bytes, *, target: str, fell_back: bool):
+    """Anthropic's prompt-too-long 400 for a backend context overflow, else None."""
+    limit = CONTEXT_MAX_RE.search(payload)
+    if not limit:
+        return None
+    maximum = int(limit.group(1))
+    found = CONTEXT_INPUT_RE.search(payload)
+    tokens = max(int(found.group(1)) if found else 0, maximum + 1)
+    body = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": f"prompt is too long: {tokens} tokens > {maximum} maximum",
+        },
+    }
+    headers = {"x-router-target": target}
+    if fell_back:
+        headers["x-router-fallback"] = "true"
+    return Response(
+        content=json.dumps(body).encode(),
+        status_code=400,
         headers=headers,
         media_type="application/json",
     )
@@ -506,6 +542,19 @@ async def _finish(upstream, *, target: str, fell_back: bool):
         return Response(
             content=payload,
             status_code=404,
+            headers=_response_headers(upstream, target=target, fell_back=fell_back),
+            media_type=media_type or None,
+        )
+
+    if target == "local" and upstream.status_code == 400:
+        payload = await upstream.aread()
+        await upstream.aclose()
+        rewritten = _prompt_too_long(payload, target=target, fell_back=fell_back)
+        if rewritten is not None:
+            return rewritten
+        return Response(
+            content=payload,
+            status_code=400,
             headers=_response_headers(upstream, target=target, fell_back=fell_back),
             media_type=media_type or None,
         )
