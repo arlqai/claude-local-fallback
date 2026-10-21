@@ -65,6 +65,13 @@ LOCAL_MAX_TOKENS = int(os.environ.get("ROUTER_LOCAL_MAX_TOKENS", "8192"))
 # Claude Code fails the turn as "exceeded the <requested> output token maximum".
 UNCAPPED_MODELS = set(os.environ.get("ROUTER_UNCAPPED_MODELS", "local-llmd").split(","))
 
+# mlx-lm reads a prompt at a few hundred tokens/s, slowing as it grows (39k
+# tokens in 2 min, 63k in 5). Claude Code waits 4 min for the first byte, then
+# 10 more, then fails, while mlx-lm keeps the one slot busy for ~40 min on a
+# 258k-token history. Prompts estimated above this go back to Claude Code at
+# once as "prompt is too long", which makes it compact. Estimate: 4 bytes/token.
+MLX_MAX_PROMPT_TOKENS = int(os.environ.get("ROUTER_MLX_MAX_PROMPT_TOKENS", "32768"))
+
 # Transient statuses worth retrying upstream before giving up. Anthropic often
 # returns 529 with `retry-after: 0`, meaning an immediate retry will likely
 # succeed -- which is what Claude Code does on its own. Falling back on the
@@ -205,14 +212,8 @@ CONTEXT_MAX_RE = re.compile(rb"maximum context length is (\d+) tokens")
 CONTEXT_INPUT_RE = re.compile(rb"(?:contains at least|requested) (\d+)")
 
 
-def _prompt_too_long(payload: bytes, *, target: str, fell_back: bool):
-    """Anthropic's prompt-too-long 400 for a backend context overflow, else None."""
-    limit = CONTEXT_MAX_RE.search(payload)
-    if not limit:
-        return None
-    maximum = int(limit.group(1))
-    found = CONTEXT_INPUT_RE.search(payload)
-    tokens = max(int(found.group(1)) if found else 0, maximum + 1)
+def _prompt_too_long_response(tokens: int, maximum: int, *, target: str, fell_back: bool):
+    """Anthropic's prompt-too-long 400, which Claude Code answers by compacting."""
     body = {
         "type": "error",
         "error": {
@@ -228,6 +229,30 @@ def _prompt_too_long(payload: bytes, *, target: str, fell_back: bool):
         status_code=400,
         headers=headers,
         media_type="application/json",
+    )
+
+
+def _prompt_too_long(payload: bytes, *, target: str, fell_back: bool):
+    """Anthropic's prompt-too-long 400 for a backend context overflow, else None."""
+    limit = CONTEXT_MAX_RE.search(payload)
+    if not limit:
+        return None
+    maximum = int(limit.group(1))
+    found = CONTEXT_INPUT_RE.search(payload)
+    tokens = max(int(found.group(1)) if found else 0, maximum + 1)
+    return _prompt_too_long_response(tokens, maximum, target=target, fell_back=fell_back)
+
+
+def _too_long_for_mlx(path: str, body: bytes, model: str, *, fell_back: bool):
+    """Refuse up front a prompt mlx-lm cannot read before Claude Code gives up."""
+    if model in UNCAPPED_MODELS or not path.rstrip("/").endswith("v1/messages"):
+        return None
+    estimate = len(body) // 4
+    if estimate <= MLX_MAX_PROMPT_TOKENS:
+        return None
+    _log(f"MLX TOO LONG: model={model} ~{estimate} tokens > {MLX_MAX_PROMPT_TOKENS}")
+    return _prompt_too_long_response(
+        estimate, MLX_MAX_PROMPT_TOKENS, target="local", fell_back=fell_back
     )
 
 
@@ -584,6 +609,11 @@ async def proxy(path: str, request: Request):
     body = await request.body()
     model = _model_of(body) if body else ""
     local = bool(model) and model.startswith(LOCAL_PREFIX)
+    if local:
+        _log(f"LOCAL model={model} ~{len(body) // 4} tokens path=/{path}")
+        refused = _too_long_for_mlx(path, body, model, fell_back=False)
+        if refused is not None:
+            return refused
 
     # Only inference calls are worth retrying elsewhere.
     eligible = (
@@ -596,6 +626,9 @@ async def proxy(path: str, request: Request):
     async def fall_back(reason: str):
         _log(f"FALLBACK: {reason} -> {FALLBACK_MODEL} (model={model or '?'})")
         await _notify(reason)
+        refused = _too_long_for_mlx(path, body, FALLBACK_MODEL, fell_back=True)
+        if refused is not None:
+            return refused
         upstream = await _send(
             request, path, _rewrite_model(body, FALLBACK_MODEL), local=True
         )
