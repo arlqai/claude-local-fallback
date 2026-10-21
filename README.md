@@ -201,6 +201,12 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   router strips the key from Anthropic-bound requests, which also repairs
   sessions that already carry it.
 
+- **A local context overflow failed the turn instead of compacting.** llm-d
+  (vLLM) rejects an over-long prompt as LiteLLM's `ContextWindowExceededError`
+  (`maximum context length is 262144 tokens ...`). Claude Code compacts and
+  retries only on Anthropic's wording, so the router rewrites a local 400 of that
+  kind into `invalid_request_error` / `prompt is too long: N tokens > M maximum`.
+
 ## Caveats
 
 - **All Claude Code traffic flows through `:4000`.** If the router dies, `claude`
