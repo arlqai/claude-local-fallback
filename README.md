@@ -108,6 +108,7 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 | `ROUTER_NOTIFY_COOLDOWN` | `60` | Notification rate limit, seconds |
 | `ROUTER_LOCAL_MAX_TOKENS` | `8192` | Hard output cap on local requests served by mlx-lm |
 | `ROUTER_UNCAPPED_MODELS` | `local-llmd` | Comma-separated local models exempt from that cap |
+| `ROUTER_MLX_MAX_PROMPT_TOKENS` | `49152` | Larger prompts (estimated at 4 bytes/token) bound for mlx-lm get an immediate `prompt is too long` |
 | `ROUTER_MLX_RESTART_COOLDOWN` | `120` | Minimum gap between router-issued mlx-lm restarts, seconds |
 | `MLX_IDLE_SECONDS` | `900` | Idle time before releasing memory |
 | `MLX_KEEP_WARM_SECONDS` | `1800` | Stay warm after upstream trouble |
@@ -206,6 +207,25 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   (`maximum context length is 262144 tokens ...`). Claude Code compacts and
   retries only on Anthropic's wording, so the router rewrites a local 400 of that
   kind into `invalid_request_error` / `prompt is too long: N tokens > M maximum`.
+
+- **A long history sent to mlx-lm hangs instead of failing.** mlx-lm reads a
+  prompt at a few hundred tokens/s, slowing as it grows (39k tokens in 2 min,
+  63k in 5). A 258k-token session history kept its one slot busy for ~40 min
+  while Claude Code waited 4 min, retried for 10, and failed with "No response
+  from the API". About 48k tokens is what mlx-lm reads inside that first 4 min,
+  so the router refuses larger prompts up front with `prompt is too long`
+  (`ROUTER_MLX_MAX_PROMPT_TOKENS`), the error Claude Code answers by compacting.
+  It logs every local request as `LOCAL model=... ~N tokens`.
+- **`local-llmd[1m]` silently ran on mlx-lm.** Claude Code marks a 1M-context
+  model with a `[1m]` suffix and sends the name as is from some paths, such as a
+  skill with `model: local-llmd[1m]`. LiteLLM has no such model, so its `*`
+  catch-all sent it to mlx-lm, which spent ~40 min on a 258k-token prompt meant
+  for llm-d. The router strips a trailing `[...]` from local model names.
+- **A Homebrew Python upgrade breaks a running mlx-lm.** Upgrading
+  `python@3.15` deletes the old Cellar directory under the running process, and
+  its next lazy stdlib import fails (`Standard library module '_colorize' was
+  not found`) on every request. Restart it:
+  `launchctl kickstart -k gui/$(id -u)/ai.arlq.mlx-lm`.
 
 ## Caveats
 
