@@ -68,9 +68,16 @@ UNCAPPED_MODELS = set(os.environ.get("ROUTER_UNCAPPED_MODELS", "local-llmd").spl
 # mlx-lm reads a prompt at a few hundred tokens/s, slowing as it grows (39k
 # tokens in 2 min, 63k in 5). Claude Code waits 4 min for the first byte, then
 # 10 more, then fails, while mlx-lm keeps the one slot busy for ~40 min on a
-# 258k-token history. Prompts estimated above this go back to Claude Code at
-# once as "prompt is too long", which makes it compact. Estimate: 4 bytes/token.
-MLX_MAX_PROMPT_TOKENS = int(os.environ.get("ROUTER_MLX_MAX_PROMPT_TOKENS", "32768"))
+# 258k-token history. ~48k is what mlx-lm reads inside that first 4 min; larger
+# prompts go back to Claude Code at once as "prompt is too long", the error it
+# answers by compacting, instead of tying up the slot. Estimate: 4 bytes/token.
+MLX_MAX_PROMPT_TOKENS = int(os.environ.get("ROUTER_MLX_MAX_PROMPT_TOKENS", "49152"))
+
+# Claude Code marks a 1M-context model by suffixing its name with `[1m]`, and
+# sends that name as is from some paths (a skill's `model: local-llmd[1m]`).
+# LiteLLM knows no `local-llmd[1m]`, so its `*` catch-all sent it to mlx-lm.
+# The suffix is client-side only: strip it from local model names.
+MODEL_SUFFIX_RE = re.compile(r"\[[^\]]*\]$")
 
 # Transient statuses worth retrying upstream before giving up. Anthropic often
 # returns 529 with `retry-after: 0`, meaning an immediate retry will likely
@@ -609,6 +616,9 @@ async def proxy(path: str, request: Request):
     body = await request.body()
     model = _model_of(body) if body else ""
     local = bool(model) and model.startswith(LOCAL_PREFIX)
+    if local and MODEL_SUFFIX_RE.search(model):
+        model = MODEL_SUFFIX_RE.sub("", model)
+        body = _rewrite_model(body, model)
     if local:
         _log(f"LOCAL model={model} ~{len(body) // 4} tokens path=/{path}")
         refused = _too_long_for_mlx(path, body, model, fell_back=False)
