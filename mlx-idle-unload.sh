@@ -26,6 +26,31 @@ log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
 PID=$(launchctl print "gui/$(id -u)/${LABEL}" 2>/dev/null | awk '/^\tpid = /{print $3}')
 [ -n "${PID:-}" ] || exit 0
 
+# A Homebrew upgrade (python@3.15, mlx-lm) deletes the Cellar directory the
+# running process was started from. It keeps answering /v1/models, then fails
+# every request on its next lazy import or file read ("Standard library module
+# '_colorize' was not found", FileNotFoundError on .../Cellar/mlx-lm/<old>/...),
+# and KeepAlive never fires. Restart it onto the new install when its executable
+# is gone, or when the log shows such an error after the latest startup.
+STALE=""
+EXE=$(ps -o comm= -p "$PID" 2>/dev/null)
+if [ -n "${EXE:-}" ] && [ ! -e "$EXE" ]; then
+    STALE="executable ${EXE} removed"
+elif [ -f "$SERVER_LOG" ] && awk '
+    /Starting httpd/                                          { stale = 0 }
+    /No such file or directory: .[^ ]*\/Cellar\//              { stale = 1 }
+    /Standard library module .* was not found/                { stale = 1 }
+    END                                                       { exit !stale }' "$SERVER_LOG"; then
+    STALE="Cellar files missing in ${SERVER_LOG}"
+fi
+if [ -n "$STALE" ]; then
+    log "stale Homebrew install (${STALE}) - restarting ${LABEL}"
+    launchctl kickstart -k "gui/$(id -u)/${LABEL}" >/dev/null 2>&1 \
+        && log "restart issued" \
+        || log "restart FAILED"
+    exit 0
+fi
+
 # A Metal OOM kills the generation thread but not the process: /v1/models stays
 # up and every completion 404s, so KeepAlive never fires. Detect it from the log
 # (a death after the latest startup) rather than probing, since a probe would
