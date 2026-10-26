@@ -221,10 +221,14 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   skill with `model: local-llmd[1m]`. LiteLLM has no such model, so its `*`
   catch-all sent it to mlx-lm, which spent ~40 min on a 258k-token prompt meant
   for llm-d. The router strips a trailing `[...]` from local model names.
-- **A Homebrew Python upgrade breaks a running mlx-lm.** Upgrading
-  `python@3.15` deletes the old Cellar directory under the running process, and
-  its next lazy stdlib import fails (`Standard library module '_colorize' was
-  not found`) on every request. Restart it:
+- **A Homebrew upgrade breaks a running mlx-lm.** Upgrading `python@3.15` or
+  `mlx-lm` deletes the old Cellar directory under the running process, and every
+  request then fails on its next lazy import or file read (`Standard library
+  module '_colorize' was not found`, `FileNotFoundError` on
+  `.../Cellar/mlx-lm/<old>/...`) while `/v1/models` stays up, so `KeepAlive`
+  never fires. Seen twice (2026-10-22, 2026-10-26). `mlx-idle-unload.sh`
+  restarts it within 5 min when the process's executable is gone or `mlx-lm.log`
+  shows such an error after the latest `Starting httpd`. By hand:
   `launchctl kickstart -k gui/$(id -u)/ai.arlq.mlx-lm`.
 
 ## Caveats
