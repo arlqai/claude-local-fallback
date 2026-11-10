@@ -51,11 +51,17 @@ Then add to `~/.claude/settings.json` (not done for you — that file is yours):
 | --- | --- |
 | `claude` | Your Claude subscription, unchanged |
 | `claude --model local-qwen` | Local Qwen3-Coder |
-| `claude --model local-llmd` | Arlq llm-d (`qwen3.8-flash-next-uncensored-nvfp4`, 262k context) |
+| `claude --model local-llmd` | Arlq llm-d (whichever model it serves) |
 
 `local-llmd` needs the llm-d API key: `start-litellm.sh` fetches it from Scaleway
 Secret Manager (`/platform/llm-d/secrets`) with `scw` when LiteLLM starts. If the
 fetch fails, LiteLLM still starts and only `local-llmd` 401s.
+
+llm-d swaps the model it serves, so the name is not hardcoded: `start-litellm.sh`
+reads it from llm-d's `GET /v1/models` at startup (logged as
+`start-litellm: local-llmd -> <model>` in `~/Library/Logs/litellm-local.log`).
+After a swap, `local-llmd` 404s with `The model ... does not exist` until you
+restart LiteLLM: `launchctl kickstart -k gui/$(id -u)/ai.arlq.litellm-local`.
 
 Every response carries `x-router-target: anthropic\|local`, and fallback
 responses also carry `x-router-fallback: true`.

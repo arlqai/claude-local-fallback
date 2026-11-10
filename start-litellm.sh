@@ -15,4 +15,15 @@ LLM_D_API_KEY=$(scw secret version access-by-path \
 [ -n "$LLM_D_API_KEY" ] || echo "start-litellm: could not fetch llm-d API key; local-llmd disabled" >&2
 export LLM_D_API_KEY
 
+# llm-d swaps the model it serves; ask it for the current name instead of
+# hardcoding it. On failure the placeholder makes local-llmd 404 (as before)
+# without stopping LiteLLM from loading.
+LLM_D_MODEL=$(curl -sf -m 10 -H "Authorization: Bearer $LLM_D_API_KEY" \
+  https://llm-d.platform.scaleway.arlq.ai/v1/models \
+  | "$DIR/venv/bin/python" -c 'import sys, json; print(json.load(sys.stdin)["data"][0]["id"])') \
+  || LLM_D_MODEL=""
+[ -n "$LLM_D_MODEL" ] || { echo "start-litellm: could not list llm-d models; local-llmd disabled" >&2; LLM_D_MODEL=unavailable; }
+echo "start-litellm: local-llmd -> $LLM_D_MODEL" >&2
+export LLM_D_MODEL="hosted_vllm/$LLM_D_MODEL"
+
 exec "$DIR/venv/bin/litellm" "$@"
