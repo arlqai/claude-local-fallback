@@ -13,11 +13,11 @@ model_list:
       # mlx-lm loads one model at startup; keep requests inside its limits.
       max_tokens: 8192
 
-  # Arlq llm-d on the platform cluster. The served model name is whatever
-  # GET /v1/models returns; update it here when llm-d swaps models.
+  # Arlq llm-d on the platform cluster. start-litellm.sh sets LLM_D_MODEL from
+  # llm-d's GET /v1/models at startup; restart this job when llm-d swaps models.
   - model_name: local-llmd
     litellm_params:
-      model: hosted_vllm/qwen3.8-flash-next-uncensored-nvfp4
+      model: os.environ/LLM_D_MODEL
       api_base: https://llm-d.platform.scaleway.arlq.ai/v1
       api_key: os.environ/LLM_D_API_KEY
 
