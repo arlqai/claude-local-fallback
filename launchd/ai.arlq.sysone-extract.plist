@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.arlq.sysone-extract</string>
+
+	<!-- Typed extraction server (port 8090), reachable directly or through the
+	     router as POST :4000/v1/extract. The model loads
+	     on the first request and unloads itself after EXTRACT_IDLE_SECONDS, so
+	     the process idles at a few hundred MB. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/share/claude-local-router/extract/venv/bin/uvicorn</string>
+		<string>sysone_extract.serve:app</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>8090</string>
+	</array>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>EXTRACT_MODEL</key>
+		<string>__HOME__/.local/share/claude-local-router/extract/model</string>
+		<key>EXTRACT_DEVICE</key>
+		<string>auto</string>
+		<key>EXTRACT_IDLE_SECONDS</key>
+		<string>900</string>
+		<key>HF_HOME</key>
+		<string>__HOME__/.cache/huggingface</string>
+		<!-- The model directory is self-contained: no Hub access at runtime. -->
+		<key>HF_HUB_OFFLINE</key>
+		<string>1</string>
+		<!-- Ops MPS lacks fall back to CPU instead of failing the request. -->
+		<key>PYTORCH_ENABLE_MPS_FALLBACK</key>
+		<string>1</string>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+
+	<key>WorkingDirectory</key>
+	<string>__HOME__/.local/share/claude-local-router/extract</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/sysone-extract.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/sysone-extract.log</string>
+</dict>
+</plist>

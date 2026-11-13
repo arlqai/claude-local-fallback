@@ -10,3 +10,10 @@ __pycache__/
 venv/
 *.log
 .DS_Store
+
+# Extractor development (see extract/README.md)
+extract/.venv/
+extract/runs/
+extract/data/
+extract/*.egg-info/
+.pytest_cache/
