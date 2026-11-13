@@ -3,6 +3,12 @@
 # the venv, render the launchd plists for this user, and load the agents.
 #
 # Idempotent: safe to re-run after editing router.py or the plists.
+#
+#   ./install.sh                        the fallback stack (and the extractor,
+#                                       if a model was deployed before)
+#   ./install.sh --extract-model DIR    also deploy a trained extractor model
+#                                       (see extract/README.md) and serve it on
+#                                       :8090, reachable as :4000/v1/extract
 
 set -euo pipefail
 
@@ -11,9 +17,32 @@ RUNTIME="${CLAUDE_FALLBACK_RUNTIME:-$HOME/.local/share/claude-local-router}"
 AGENTS="$HOME/Library/LaunchAgents"
 UID_NUM="$(id -u)"
 LABELS=(ai.arlq.mlx-lm ai.arlq.litellm-local ai.arlq.claude-router ai.arlq.mlx-idle-unload)
+EXTRACT_LABEL=ai.arlq.sysone-extract
+EXTRACT_DIR="$RUNTIME/extract"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$1"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
+
+EXTRACT_MODEL_SRC=""
+RELOAD_ONLY=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --reload-agents) RELOAD_ONLY=1 ;;
+        --extract-model)
+            [ $# -ge 2 ] || die "--extract-model needs a directory"
+            EXTRACT_MODEL_SRC="$(cd "$2" && pwd)" || die "no such directory: $2"
+            shift ;;
+        *) die "unknown option: $1" ;;
+    esac
+    shift
+done
+
+# The extractor is optional: its agent only runs once a model is deployed, so
+# the stack installs and works without PyTorch. Decided here, before
+# reload_agents, because the detached reload re-runs this script.
+if [ -n "$EXTRACT_MODEL_SRC" ] || [ -f "$EXTRACT_DIR/model/extractor.json" ]; then
+    LABELS+=("$EXTRACT_LABEL")
+fi
 
 # bootout then bootstrap: launchctl caches the job definition, so `kickstart`
 # alone silently keeps running the previous plist's arguments.
@@ -41,7 +70,7 @@ reload_agents() {
     done
     echo "reload-done"
 }
-if [ "${1:-}" = "--reload-agents" ]; then
+if [ -n "$RELOAD_ONLY" ]; then
     reload_agents
     exit 0
 fi
@@ -83,6 +112,30 @@ say "Installing Python dependencies (large tree; this takes a few minutes)"
     || die "FastAPI too new: litellm 1.95 needs get_flat_dependant (use fastapi<0.141)"
 "$RUNTIME/venv/bin/python" -c 'import litellm' >/dev/null 2>&1 \
     || die "litellm failed to import"
+
+# --- extractor (optional) ----------------------------------------------------
+# Its own venv: PyTorch is large, and LiteLLM's FastAPI pin above must not be
+# disturbed by anything the extractor pulls in.
+if [[ " ${LABELS[*]} " == *" $EXTRACT_LABEL "* ]]; then
+    say "Installing the extractor into $EXTRACT_DIR"
+    mkdir -p "$EXTRACT_DIR"
+    if [ ! -x "$EXTRACT_DIR/venv/bin/python" ]; then
+        python3 -m venv "$EXTRACT_DIR/venv"
+    fi
+    "$EXTRACT_DIR/venv/bin/pip" install --quiet --upgrade pip
+    "$EXTRACT_DIR/venv/bin/pip" install --quiet "$REPO/extract[serve]"
+    "$EXTRACT_DIR/venv/bin/python" -c 'import sysone_extract.serve, torch' \
+        || die "extractor failed to import"
+    if [ -n "$EXTRACT_MODEL_SRC" ]; then
+        [ -f "$EXTRACT_MODEL_SRC/extractor.json" ] \
+            || die "$EXTRACT_MODEL_SRC is not a trained extractor (no extractor.json)"
+        say "Deploying extractor model from $EXTRACT_MODEL_SRC"
+        rm -rf "$EXTRACT_DIR/model.new"
+        cp -R "$EXTRACT_MODEL_SRC" "$EXTRACT_DIR/model.new"
+        rm -rf "$EXTRACT_DIR/model"
+        mv "$EXTRACT_DIR/model.new" "$EXTRACT_DIR/model"
+    fi
+fi
 
 # --- launchd agents ----------------------------------------------------------
 say "Rendering and installing launchd agents"
@@ -131,6 +184,15 @@ if [ -n "$code" ] && [ "$code" != "000" ]; then
     echo "    router  :4000 ok (HTTP $code from Anthropic passthrough)"
 else
     echo "    router  :4000 NOT READY"
+fi
+if [[ " ${LABELS[*]} " == *" $EXTRACT_LABEL "* ]]; then
+    # /health does not load the model, so this stays cheap.
+    if curl -fsS --retry 20 --retry-delay 1 --retry-connrefused --max-time 60 \
+            http://127.0.0.1:8090/health >/dev/null 2>&1; then
+        echo "    extract :8090 ok (model loads on first request; POST :4000/v1/extract)"
+    else
+        echo "    extract :8090 NOT READY (see ~/Library/Logs/sysone-extract.log)"
+    fi
 fi
 
 say "Done"

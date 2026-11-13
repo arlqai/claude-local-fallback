@@ -6,6 +6,7 @@ to it on demand — without touching your Claude subscription or billing.
 ```
 Claude Code ──> router (:4000)
                   ├─ model local-*  ──> LiteLLM (:4001) ──> mlx-lm (:8080)
+                  ├─ POST /v1/extract ──> sysone-extract (:8090)   optional, see below
                   └─ anything else  ──> verbatim passthrough ──> api.anthropic.com
                                           └─ on outage, after retries ──> local
 ```
@@ -63,7 +64,7 @@ reads it from llm-d's `GET /v1/models` at startup (logged as
 After a swap, `local-llmd` 404s with `The model ... does not exist` until you
 restart LiteLLM: `launchctl kickstart -k gui/$(id -u)/ai.arlq.litellm-local`.
 
-Every response carries `x-router-target: anthropic\|local`, and fallback
+Every response carries `x-router-target: anthropic\|local\|extract`, and fallback
 responses also carry `x-router-fallback: true`.
 
 ## Fallback behaviour
@@ -84,6 +85,39 @@ Fallback is a last resort, not a hair trigger:
 When it does fall back, it is made visible three ways: a banner prepended to the
 assistant's first text block, a rate-limited desktop notification, and a
 `FALLBACK` line in `~/Library/Logs/claude-router.log`.
+
+## Typed extraction (optional)
+
+`extract/` holds **sysone-extract**, a small local "System One" extraction
+model in the spirit of Cloudflare's Clairic. You send a document and a schema
+of typed fields, and one forward pass returns a typed value per field, with
+its character span, `p_null` and a calibrated `confidence`. It generates no
+tokens, so every answer is a valid value of the declared type or `null`.
+
+```sh
+curl -s 127.0.0.1:4000/v1/extract -d '{
+  "state": "Hi, order A-88412 arrived on Sept 28, 2026 with a cracked screen ...",
+  "fields": {
+    "order_id":     {"type": "text", "instructions": "Order number"},
+    "delivered_on": {"type": "date", "instructions": "Delivery date"},
+    "damage":       {"type": "list", "instructions": "Each kind of damage"}
+  }}'
+```
+
+It is off until you deploy a model you have trained (`extract/README.md`
+covers data, training, evaluation and calibration; your own documents can
+be labelled by `local-llmd` through LiteLLM):
+
+```sh
+./install.sh --extract-model extract/runs/v0
+```
+
+That installs it in its own venv (PyTorch is large, and LiteLLM's FastAPI
+pin must not move) and loads the `ai.arlq.sysone-extract` agent on :8090.
+Later runs of `./install.sh` keep the deployed model. The model loads on the
+first request and unloads itself after 15 idle minutes. `/v1/extract` never
+goes to Anthropic, the caller's credential is not forwarded, and while the
+extractor is down the router answers 503.
 
 ## Memory
 
@@ -118,6 +152,9 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
 | `ROUTER_MLX_RESTART_COOLDOWN` | `120` | Minimum gap between router-issued mlx-lm restarts, seconds |
 | `MLX_IDLE_SECONDS` | `900` | Idle time before releasing memory |
 | `MLX_KEEP_WARM_SECONDS` | `1800` | Stay warm after upstream trouble |
+| `ROUTER_EXTRACT_BACKEND` | `http://127.0.0.1:8090` | Where the router sends `POST /v1/extract` |
+| `EXTRACT_IDLE_SECONDS` | `900` | Extractor: idle time before it unloads its model (in its own plist) |
+| `EXTRACT_MAX_STATE_TOKENS` | `65536` | Extractor: larger documents get a 413 |
 
 ## Gotchas found the hard way
 
@@ -259,9 +296,11 @@ router.py               Routing, retries, fallback, banner injection
 litellm.config.yaml     Anthropic <-> OpenAI translation for mlx-lm
 mlx-idle-unload.sh      Idle watchdog
 launchd/*.plist         Agent templates (__HOME__ rendered by install.sh)
-install.sh              Deploy + load
+install.sh              Deploy + load (--extract-model DIR adds the extractor)
 requirements.txt        Pinned Python deps
+extract/                sysone-extract: model, data builders, training, server, tests
 ```
 
-Runtime lives in `~/.local/share/claude-local-router/`; logs in
-`~/Library/Logs/{mlx-lm,litellm-local,claude-router,mlx-lm-watchdog}.log`.
+Runtime lives in `~/.local/share/claude-local-router/` (the extractor's venv and
+model in `extract/` under it); logs in
+`~/Library/Logs/{mlx-lm,litellm-local,claude-router,mlx-lm-watchdog,sysone-extract}.log`.

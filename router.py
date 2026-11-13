@@ -33,6 +33,10 @@ from fastapi.responses import Response, StreamingResponse
 UPSTREAM = os.environ.get("ROUTER_UPSTREAM", "https://api.anthropic.com").rstrip("/")
 LOCAL_BACKEND = os.environ.get("ROUTER_LOCAL_BACKEND", "http://127.0.0.1:4001").rstrip("/")
 LOCAL_PREFIX = os.environ.get("ROUTER_LOCAL_PREFIX", "local")
+# sysone-extract: typed extraction (POST /v1/extract) served on its own port.
+# The extractor loads its model lazily and unloads it when idle on its own.
+EXTRACT_BACKEND = os.environ.get("ROUTER_EXTRACT_BACKEND", "http://127.0.0.1:8090").rstrip("/")
+EXTRACT_PATHS = {"v1/extract"}
 
 
 def _flag(name: str, default: str = "1") -> bool:
@@ -608,12 +612,39 @@ async def _finish(upstream, *, target: str, fell_back: bool):
     )
 
 
+async def _extract(path: str, request: Request, body: bytes) -> Response:
+    """Forward an extraction request to sysone-extract.
+
+    Never to Anthropic, and never with the caller's credential: the extractor
+    runs locally and needs none.
+    """
+    headers = {"content-type": request.headers.get("content-type", "application/json")}
+    try:
+        upstream = await client.request(
+            request.method, f"{EXTRACT_BACKEND}/{path}", headers=headers, content=body or None
+        )
+    except httpx.RequestError as exc:
+        _log(f"EXTRACT unreachable: {type(exc).__name__} at {EXTRACT_BACKEND}")
+        payload = {"error": {"type": "unavailable", "message": f"extractor not reachable at {EXTRACT_BACKEND}"}}
+        return Response(json.dumps(payload).encode(), status_code=503,
+                        headers={"x-router-target": "extract"}, media_type="application/json")
+    _log(f"EXTRACT {upstream.status_code} ~{len(body) // 4} tokens")
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={"x-router-target": "extract"},
+        media_type=upstream.headers.get("content-type", "application/json"),
+    )
+
+
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 )
 async def proxy(path: str, request: Request):
     body = await request.body()
+    if path.rstrip("/") in EXTRACT_PATHS:
+        return await _extract(path, request, body)
     model = _model_of(body) if body else ""
     local = bool(model) and model.startswith(LOCAL_PREFIX)
     if local and MODEL_SUFFIX_RE.search(model):
