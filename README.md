@@ -60,8 +60,11 @@ fetch fails, LiteLLM still starts and only `local-llmd` 401s.
 llm-d swaps the model it serves, so the name is not hardcoded: `start-litellm.sh`
 reads it from llm-d's `GET /v1/models` at startup (logged as
 `start-litellm: local-llmd -> <model>` in `~/Library/Logs/litellm-local.log`).
-After a swap, `local-llmd` 404s with `The model ... does not exist` until you
-restart LiteLLM: `launchctl kickstart -k gui/$(id -u)/ai.arlq.litellm-local`.
+After a swap, llm-d rejects the old name with a 404 (`The model ... does not
+exist. Valid aliases: ...`). The router answers that with a retryable `529`
+and kickstarts LiteLLM, at most once per `ROUTER_MLX_RESTART_COOLDOWN` seconds,
+so it reads the new name and Claude Code's retry succeeds. By hand:
+`launchctl kickstart -k gui/$(id -u)/ai.arlq.litellm-local`.
 
 Every response carries `x-router-target: anthropic\|local`, and fallback
 responses also carry `x-router-fallback: true`.
