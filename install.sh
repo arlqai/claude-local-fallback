@@ -8,6 +8,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${CLAUDE_FALLBACK_RUNTIME:-$HOME/.local/share/claude-local-router}"
+PYTHON_VERSION="3.13"
 AGENTS="$HOME/Library/LaunchAgents"
 UID_NUM="$(id -u)"
 LABELS=(ai.arlq.mlx-lm ai.arlq.litellm-local ai.arlq.claude-router ai.arlq.mlx-idle-unload)
@@ -50,6 +51,7 @@ fi
 say "Checking prerequisites"
 [ "$(uname -s)" = "Darwin" ] || die "macOS only (launchd + mlx)"
 command -v python3 >/dev/null || die "python3 not found"
+command -v uv >/dev/null || die "uv not found; install with: brew install uv"
 [ -x /opt/homebrew/opt/mlx-lm/bin/mlx_lm.server ] \
     || die "mlx-lm not found; install with: brew install mlx-lm"
 
@@ -68,13 +70,18 @@ cp "$REPO/router.py" "$REPO/litellm.config.yaml" "$REPO/mlx-idle-unload.sh" "$RE
 chmod +x "$RUNTIME/mlx-idle-unload.sh" "$RUNTIME/start-litellm.sh"
 
 # --- virtualenv --------------------------------------------------------------
-if [ ! -x "$RUNTIME/venv/bin/python" ]; then
-    say "Creating virtualenv"
-    python3 -m venv "$RUNTIME/venv"
+# The venv runs on a uv-managed Python: one from Homebrew or mise is deleted by
+# their upgrades, which leaves the venv dangling and the services unable to
+# start. A venv that cannot run, or that uv did not create, is rebuilt from
+# scratch: `venv` cannot repair one whose interpreter is gone.
+if ! "$RUNTIME/venv/bin/python" -c '' 2>/dev/null \
+    || ! grep -q '^uv = ' "$RUNTIME/venv/pyvenv.cfg" 2>/dev/null; then
+    say "Creating virtualenv (uv-managed Python $PYTHON_VERSION)"
+    rm -rf "$RUNTIME/venv"
+    uv venv --quiet --managed-python --python "$PYTHON_VERSION" "$RUNTIME/venv"
 fi
 say "Installing Python dependencies (large tree; this takes a few minutes)"
-"$RUNTIME/venv/bin/pip" install --quiet --upgrade pip
-"$RUNTIME/venv/bin/pip" install --quiet -r "$REPO/requirements.txt"
+uv pip install --quiet --python "$RUNTIME/venv/bin/python" -r "$REPO/requirements.txt"
 
 # LiteLLM's declared fastapi range has no working upper bound (see
 # requirements.txt), so assert the symbol its proxy needs rather than trusting

@@ -30,7 +30,7 @@ tool calls.
 
 ## Install
 
-Requires macOS, Apple Silicon, `brew install mlx-lm`, and Claude Code.
+Requires macOS, Apple Silicon, `brew install mlx-lm`, `uv`, and Claude Code.
 
 ```sh
 ./install.sh
@@ -60,8 +60,11 @@ fetch fails, LiteLLM still starts and only `local-llmd` 401s.
 llm-d swaps the model it serves, so the name is not hardcoded: `start-litellm.sh`
 reads it from llm-d's `GET /v1/models` at startup (logged as
 `start-litellm: local-llmd -> <model>` in `~/Library/Logs/litellm-local.log`).
-After a swap, `local-llmd` 404s with `The model ... does not exist` until you
-restart LiteLLM: `launchctl kickstart -k gui/$(id -u)/ai.arlq.litellm-local`.
+After a swap, llm-d rejects the old name with a 404 (`The model ... does not
+exist. Valid aliases: ...`). The router answers that with a retryable `529`
+and kickstarts LiteLLM, at most once per `ROUTER_MLX_RESTART_COOLDOWN` seconds,
+so it reads the new name and Claude Code's retry succeeds. By hand:
+`launchctl kickstart -k gui/$(id -u)/ai.arlq.litellm-local`.
 
 Every response carries `x-router-target: anthropic\|local`, and fallback
 responses also carry `x-router-fallback: true`.
@@ -236,6 +239,13 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   restarts it within 5 min when the process's executable is gone or `mlx-lm.log`
   shows such an error after the latest `Starting httpd`. By hand:
   `launchctl kickstart -k gui/$(id -u)/ai.arlq.mlx-lm`.
+- **A Python upgrade left the router venv dangling.** The venv used to be built
+  with the shell's `python3`, and a Homebrew upgrade deleted that interpreter
+  (2026-11-24). The running LiteLLM and router kept working from memory, but
+  nothing could start from the venv again. `install.sh` now builds it on a
+  uv-managed Python (`PYTHON_VERSION`), which Homebrew and mise upgrades leave
+  alone, and rebuilds from scratch a venv that cannot run or that uv did not
+  create.
 
 ## Caveats
 

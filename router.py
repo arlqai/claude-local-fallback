@@ -120,6 +120,13 @@ MLX_LABEL = os.environ.get("ROUTER_MLX_LABEL", "ai.arlq.mlx-lm")
 MLX_RESTART_COOLDOWN = float(os.environ.get("ROUTER_MLX_RESTART_COOLDOWN", "120"))
 DEAD_GENERATION_RETRY_AFTER = "30"
 
+# start-litellm.sh reads local-llmd's model name from llm-d once, at startup.
+# When llm-d swaps the model it serves, vLLM rejects the old name with this
+# marker (also relayed as a 404). Restarting LiteLLM makes it read the new name,
+# so the router does that and answers a retryable 529, as for a dead mlx-lm.
+LLMD_MODEL_GONE_MARKER = b"does not exist. Valid aliases"
+LITELLM_LABEL = os.environ.get("ROUTER_LITELLM_LABEL", "ai.arlq.litellm-local")
+
 # Generous read timeout: a cold mlx-lm load can take a while, and long agentic
 # turns on either backend can legitimately exceed a default timeout.
 TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=60.0, pool=10.0)
@@ -138,7 +145,7 @@ app = FastAPI()
 client = httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False)
 
 _last_notify = 0.0
-_last_mlx_restart = float("-inf")
+_last_restart: dict[str, float] = {}
 
 
 def _log(msg: str) -> None:
@@ -170,22 +177,21 @@ async def _notify(reason: str) -> None:
         pass
 
 
-async def _restart_mlx() -> None:
-    """Kickstart mlx-lm, at most once per cooldown.
+async def _restart(label: str, reason: str) -> None:
+    """Kickstart a launchd service, at most once per cooldown per service.
 
-    Every request queued behind the dead thread fails the same way, so without
-    the cooldown one death would restart the server once per request, killing
-    the cold load the previous restart started.
+    Every request queued behind the failure fails the same way, so without the
+    cooldown one failure would restart the service once per request, killing
+    the startup the previous restart began.
     """
-    global _last_mlx_restart
     now = time.monotonic()
-    if now - _last_mlx_restart < MLX_RESTART_COOLDOWN:
+    if now - _last_restart.get(label, float("-inf")) < MLX_RESTART_COOLDOWN:
         return
-    _last_mlx_restart = now
-    _log(f"MLX DEAD: generation thread died -> restarting {MLX_LABEL}")
+    _last_restart[label] = now
+    _log(f"RESTART {label}: {reason}")
     try:
         proc = await asyncio.create_subprocess_exec(
-            "/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{MLX_LABEL}",
+            "/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}",
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
         asyncio.create_task(proc.wait())
@@ -566,9 +572,15 @@ async def _finish(upstream, *, target: str, fell_back: bool):
         payload = await upstream.aread()
         await upstream.aclose()
         if DEAD_GENERATION_MARKER in payload:
-            await _restart_mlx()
+            await _restart(MLX_LABEL, "generation thread died")
             return _overloaded(
                 "Local model crashed (generation thread died); restarting it.",
+                target=target, fell_back=fell_back,
+            )
+        if LLMD_MODEL_GONE_MARKER in payload:
+            await _restart(LITELLM_LABEL, "llm-d no longer serves the configured model")
+            return _overloaded(
+                "llm-d swapped its model; restarting LiteLLM to pick up the new one.",
                 target=target, fell_back=fell_back,
             )
         return Response(
