@@ -30,7 +30,7 @@ tool calls.
 
 ## Install
 
-Requires macOS, Apple Silicon, `brew install mlx-lm`, and Claude Code.
+Requires macOS, Apple Silicon, `brew install mlx-lm`, `uv`, and Claude Code.
 
 ```sh
 ./install.sh
@@ -239,6 +239,13 @@ Set in the relevant plist's `EnvironmentVariables`, then reload (see below).
   restarts it within 5 min when the process's executable is gone or `mlx-lm.log`
   shows such an error after the latest `Starting httpd`. By hand:
   `launchctl kickstart -k gui/$(id -u)/ai.arlq.mlx-lm`.
+- **A Python upgrade left the router venv dangling.** The venv used to be built
+  with the shell's `python3`, and a Homebrew upgrade deleted that interpreter
+  (2026-11-24). The running LiteLLM and router kept working from memory, but
+  nothing could start from the venv again. `install.sh` now builds it on a
+  uv-managed Python (`PYTHON_VERSION`), which Homebrew and mise upgrades leave
+  alone, and rebuilds from scratch a venv that cannot run or that uv did not
+  create.
 
 ## Caveats
 
